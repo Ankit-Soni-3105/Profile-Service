@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka-1:29092', 'kafka-2:29093', 'kafka-3:29094']  # Add if you expose Kafka metrics
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-node-1:7001', 'redis-node-2:7002', 'redis-node-3:7003']
+  - job_name: 'mongo'
+    static_configs:
+      - targets: ['mongo-primary:27017']
+  - job_name: 'auth-service'
+    static_configs:
+      - targets: ['auth-service:3000']  # Expose /metrics in your app code
+  - job_name: 'message-service'
+    static_configs:
+      - targets: ['messenger-service-1:3001', 'messenger-service-2:3001', 'messenger-service-3:3001']

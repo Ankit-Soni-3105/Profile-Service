@@ -1,0 +1,911 @@
+services:
+  # Zookeeper Cluster
+  zookeeper-1:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper-1
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SERVER_ID: 1
+      ZOOKEEPER_SERVERS: zookeeper-1:2888:3888;zookeeper-2:2888:3888;zookeeper-3:2888:3888
+    volumes:
+      - zookeeper-1-data:/var/lib/zookeeper/data
+      - zookeeper-1-logs:/var/lib/zookeeper/log
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo stat | nc -w 2 localhost 2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - app-network
+    restart: always
+
+  zookeeper-2:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper-2
+    ports:
+      - "2182:2182"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2182
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SERVER_ID: 2
+      ZOOKEEPER_SERVERS: zookeeper-1:2888:3888;zookeeper-2:2888:3888;zookeeper-3:2888:3888
+    volumes:
+      - zookeeper-2-data:/var/lib/zookeeper/data
+      - zookeeper-2-logs:/var/lib/zookeeper/log
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo stat | nc -w 2 localhost 2182"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - app-network
+    restart: always
+
+  zookeeper-3:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper-3
+    ports:
+      - "2183:2183"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2183
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SERVER_ID: 3
+      ZOOKEEPER_SERVERS: zookeeper-1:2888:3888;zookeeper-2:2888:3888;zookeeper-3:2888:3888
+    volumes:
+      - zookeeper-3-data:/var/lib/zookeeper/data
+      - zookeeper-3-logs:/var/lib/zookeeper/log
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo stat | nc -w 2 localhost 2183"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+    networks:
+      - app-network
+    restart: always
+
+  # Kafka Cluster
+  kafka-1:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka-1
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    depends_on:
+      zookeeper-1:
+        condition: service_healthy
+      zookeeper-2:
+        condition: service_healthy
+      zookeeper-3:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper-1:2181,zookeeper-2:2182,zookeeper-3:2183
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_NUM_PARTITIONS: 128
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_RETENTION_BYTES: 1073741824
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_LOG_CLEANUP_POLICY: delete
+    volumes:
+      - kafka-1-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--list", "--bootstrap-server", "localhost:29092"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: "2.0"
+        reservations:
+          memory: 2G
+          cpus: "1.5"
+    networks:
+      - app-network
+    restart: always
+
+  kafka-2:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka-2
+    ports:
+      - "9093:9093"
+      - "29093:29093"
+    depends_on:
+      zookeeper-1:
+        condition: service_healthy
+      zookeeper-2:
+        condition: service_healthy
+      zookeeper-3:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 2
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper-1:2181,zookeeper-2:2182,zookeeper-3:2183
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:29093,PLAINTEXT_HOST://localhost:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_NUM_PARTITIONS: 128
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_RETENTION_BYTES: 1073741824
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_LOG_CLEANUP_POLICY: delete
+    volumes:
+      - kafka-2-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--list", "--bootstrap-server", "localhost:29093"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: "2.0"
+        reservations:
+          memory: 2G
+          cpus: "1.5"
+    networks:
+      - app-network
+    restart: always
+
+  kafka-3:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka-3
+    ports:
+      - "9094:9094"
+      - "29094:29094"
+    depends_on:
+      zookeeper-1:
+        condition: service_healthy
+      zookeeper-2:
+        condition: service_healthy
+      zookeeper-3:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper-1:2181,zookeeper-2:2182,zookeeper-3:2183
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:29094,PLAINTEXT_HOST://localhost:9094
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29094,PLAINTEXT_HOST://0.0.0.0:9094
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_NUM_PARTITIONS: 128
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+      KAFKA_MIN_INSYNC_REPLICAS: 2
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_RETENTION_BYTES: 1073741824
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+      KAFKA_LOG_CLEANUP_POLICY: delete
+    volumes:
+      - kafka-3-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--list", "--bootstrap-server", "localhost:29094"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+          cpus: "2.0"
+        reservations:
+          memory: 2G
+          cpus: "1.5"
+    networks:
+      - app-network
+    restart: always
+
+  # Kafka UI for Management
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:29092,kafka-2:29093,kafka-3:29094
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper-1:2181,zookeeper-2:2182,zookeeper-3:2183
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: always
+
+  # Redis Cluster (6 Nodes: 3 Masters + 3 Replicas)
+  redis-node-1:
+    image: redis:7.2-alpine
+    container_name: redis-node-1
+    ports:
+      - "7001:7001"
+    command: redis-server --port 7001 --cluster-enabled yes --cluster-config-file nodes-7001.conf --cluster-node-timeout 5000 --appendonly yes --appendfilename appendonly-7001.aof --dbfilename dump-7001.rdb --logfile redis-7001.log --daemonize no --maxmemory 400mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-1-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7001", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    networks:
+      - app-network
+    restart: always
+
+  redis-node-2:
+    image: redis:7.2-alpine
+    container_name: redis-node-2
+    ports:
+      - "7002:7002"
+    command: redis-server --port 7002 --cluster-enabled yes --cluster-config-file nodes-7002.conf --cluster-node-timeout 5000 --appendonly yes --appendfilename appendonly-7002.aof --dbfilename dump-7002.rdb --logfile redis-7002.log --daemonize no --maxmemory 400mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-2-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7002", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    networks:
+      - app-network
+    restart: always
+
+  redis-node-3:
+    image: redis:7.2-alpine
+    container_name: redis-node-3
+    ports:
+      - "7003:7003"
+    command: redis-server --port 7003 --cluster-enabled yes --cluster-config-file nodes-7003.conf --cluster-node-timeout 5000 --appendonly yes --appendfilename appendonly-7003.aof --dbfilename dump-7003.rdb --logfile redis-7003.log --daemonize no --maxmemory 400mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-3-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7003", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    networks:
+      - app-network
+    restart: always
+
+  redis-node-4:
+    image: redis:7.2-alpine
+    container_name: redis-node-4
+    ports:
+      - "7004:7004"
+    command: redis-server --port 7004 --cluster-enabled yes --cluster-config-file nodes-7004.conf --cluster-node-timeout 5000 --appendonly yes --appendfilename appendonly-7004.aof --dbfilename dump-7004.rdb --logfile redis-7004.log --daemonize no --maxmemory 400mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-4-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7004", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    networks:
+      - app-network
+    restart: always
+
+  redis-node-5:
+    image: redis:7.2-alpine
+    container_name: redis-node-5
+    ports:
+      - "7005:7005"
+    command: redis-server --port 7005 --cluster-enabled yes --cluster-config-file nodes-7005.conf --cluster-node-timeout 5000 --appendonly yes --appendfilename appendonly-7005.aof --dbfilename dump-7005.rdb --logfile redis-7005.log --daemonize no --maxmemory 400mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-5-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7005", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    networks:
+      - app-network
+    restart: always
+
+  redis-node-6:
+    image: redis:7.2-alpine
+    container_name: redis-node-6
+    ports:
+      - "7006:7006"
+    command: redis-server --port 7006 --cluster-enabled yes --cluster-config-file nodes-7006.conf --cluster-node-timeout 5000 --appendonly yes --appendfilename appendonly-7006.aof --dbfilename dump-7006.rdb --logfile redis-7006.log --daemonize no --maxmemory 400mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-6-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "7006", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    networks:
+      - app-network
+    restart: always
+
+  # Redis Cluster Initialization
+  redis-cluster-init:
+    image: redis:7.2-alpine
+    container_name: redis-cluster-init
+    command: >
+      sh -c "
+        apk add --no-cache redis &&
+      echo 'Waiting for redis nodes to be ready...' &&
+      sleep 60 &&
+      redis-cli --cluster create redis-node-1:7001 redis-node-2:7002 redis-node-3:7003 redis-node-4:7004 redis-node-5:7005 redis-node-6:7006 --cluster-replicas 1 --cluster-yes || echo 'Cluster creation failed: $?'
+      echo 'Redis cluster initialization attempt completed.'
+      "
+    depends_on:
+      redis-node-1:
+        condition: service_healthy
+      redis-node-2:
+        condition: service_healthy
+      redis-node-3:
+        condition: service_healthy
+      redis-node-4:
+        condition: service_healthy
+      redis-node-5:
+        condition: service_healthy
+      redis-node-6:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  # Application Services
+  # Auth Service (Scaled to 3 Instances for High Availability)
+  auth-service-1:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.auth
+      # context: ./services/auth-service
+      # dockerfile: ../../docker/Dockerfile.auth
+    container_name: auth-service-1
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - INSTANCE_ID=1
+      - MONGO_URI=mongodb+srv://ankitsoni12351234:4kVkpnUEn4XeyyMR@ai-coding-review-anlyti.4lt3kxu.mongodb.net/auth-service?retryWrites=true&w=majority
+      - KAFKA_BROKERS=kafka-1:29092,kafka-2:29093,kafka-3:29094
+      - JWT_SECRET_FILE=/run/secrets/jwt_secret
+      - JWT_EXPIRATION=1d
+      - REDIS_CLUSTER_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003,redis-node-4:7004,redis-node-5:7005,redis-node-6:7006
+      - LOG_LEVEL=info
+      - REDIS_CACHE_TTL=3600
+      - JWT_ALG=RS256
+      - JWT_PRIVATE_KEY_PATH=/run/secrets/jwt_private_key
+      - KAFKA_CLIENT_ID=auth-service
+      - KAFKA_USER_EVENTS_TOPIC=user-events
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+      redis-cluster-init:
+        condition: service_completed_successfully
+    secrets:
+      - jwt_secret
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+          cpus: "1.5"
+    networks:
+      - app-network
+    restart: always
+
+  auth-service-2:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.auth
+    container_name: auth-service-2
+    ports:
+      - "3001:3000"
+    environment:
+      - PORT=3000
+      - INSTANCE_ID=2
+      - MONGO_URI=mongodb+srv://ankitsoni12351234:4kVkpnUEn4XeyyMR@ai-coding-review-anlyti.4lt3kxu.mongodb.net/auth-service?retryWrites=true&w=majority
+      - KAFKA_BROKERS=kafka-1:29092,kafka-2:29093,kafka-3:29094
+      - JWT_SECRET_FILE=/run/secrets/jwt_secret
+      - JWT_EXPIRATION=1d
+      - REDIS_CLUSTER_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003,redis-node-4:7004,redis-node-5:7005,redis-node-6:7006
+      - LOG_LEVEL=info
+      - REDIS_CACHE_TTL=3600
+      - JWT_ALG=RS256
+      - JWT_PRIVATE_KEY_PATH=/run/secrets/jwt_private_key
+      - KAFKA_CLIENT_ID=auth-service
+      - KAFKA_USER_EVENTS_TOPIC=user-events
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+      redis-cluster-init:
+        condition: service_completed_successfully
+    secrets:
+      - jwt_secret
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+          cpus: "1.5"
+    networks:
+      - app-network
+    restart: always
+
+  auth-service-3:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.auth
+    container_name: auth-service-3
+    ports:
+      - "3002:3000"
+    environment:
+      - PORT=3000
+      - INSTANCE_ID=3
+      - MONGO_URI=mongodb+srv://ankitsoni12351234:4kVkpnUEn4XeyyMR@ai-coding-review-anlyti.4lt3kxu.mongodb.net/auth-service?retryWrites=true&w=majority
+      - KAFKA_BROKERS=kafka-1:29092,kafka-2:29093,kafka-3:29094
+      - JWT_SECRET_FILE=/run/secrets/jwt_secret
+      - JWT_EXPIRATION=1d
+      - REDIS_CLUSTER_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003,redis-node-4:7004,redis-node-5:7005,redis-node-6:7006
+      - LOG_LEVEL=info
+      - REDIS_CACHE_TTL=3600
+      - JWT_ALG=RS256
+      - JWT_PRIVATE_KEY_PATH=/run/secrets/jwt_private_key
+      - KAFKA_CLIENT_ID=auth-service
+      - KAFKA_USER_EVENTS_TOPIC=user-events
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+      redis-cluster-init:
+        condition: service_completed_successfully
+    secrets:
+      - jwt_secret
+    deploy:
+      resources:
+        limits:
+          memory: 1.5G
+          cpus: "1.5"
+    networks:
+      - app-network
+    restart: always
+
+  # Profile Service (3 Instances for High Availability and Load Balancing)
+  personal-info-service-1:
+    build:
+      context: ./docker
+      dockerfile: dockerfile.profile
+    container_name: personal-info-service-1
+    ports:
+      - "3004:3004"
+    environment:
+      - PORT=3004
+      - INSTANCE_ID=1
+      - MONGO_URI=mongodb+srv://ankitsoni12351234:4kVkpnUEn4XeyyMR@ai-coding-review-anlyti.4lt3kxu.mongodb.net/profile-service?retryWrites=true&w=majority
+      - KAFKA_BROKERS=kafka-1:29092,kafka-2:29093,kafka-3:29094
+      - KAFKA_GROUP_MIN_SESSION_TIMEOUT_MS=6000
+      - KAFKA_GROUP_MAX_SESSION_TIMEOUT_MS=300000
+      - JWT_SECRET_FILE=/run/secrets/jwt_secret
+      - JWT_EXPIRATION=1d
+      - REDIS_CLUSTER_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003,redis-node-4:7004,redis-node-5:7005,redis-node-6:7006
+      - LOG_LEVEL=info
+      - REDIS_CACHE_TTL=3600
+      - PROFILE_EVENTS_TOPIC=profile-events
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+      redis-cluster-init:
+        condition: service_completed_successfully
+    secrets:
+      - jwt_secret
+    deploy:
+      resources:
+        limits:
+          memory: 2.5G
+          cpus: "2.0"
+        reservations:
+          memory: 2G
+    networks:
+      - app-network
+    restart: always
+
+  personal-info-service-2:
+    build:
+      context: ./docker
+      dockerfile: dockerfile.profile
+    container_name: personal-info-service-2
+    ports:
+      - "3005:3004"
+    environment:
+      - PORT=3004
+      - INSTANCE_ID=2
+      - MONGO_URI=mongodb+srv://ankitsoni12351234:4kVkpnUEn4XeyyMR@ai-coding-review-anlyti.4lt3kxu.mongodb.net/profile-service?retryWrites=true&w=majority
+      - KAFKA_BROKERS=kafka-1:29092,kafka-2:29093,kafka-3:29094
+      - KAFKA_GROUP_MIN_SESSION_TIMEOUT_MS=6000
+      - KAFKA_GROUP_MAX_SESSION_TIMEOUT_MS=300000
+      - JWT_SECRET_FILE=/run/secrets/jwt_secret
+      - JWT_EXPIRATION=1d
+      - REDIS_CLUSTER_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003,redis-node-4:7004,redis-node-5:7005,redis-node-6:7006
+      - LOG_LEVEL=info
+      - REDIS_CACHE_TTL=3600
+      - PROFILE_EVENTS_TOPIC=profile-events
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+      redis-cluster-init:
+        condition: service_completed_successfully
+    secrets:
+      - jwt_secret
+    deploy:
+      resources:
+        limits:
+          memory: 2.5G
+          cpus: "2.0"
+        reservations:
+          memory: 2G
+    networks:
+      - app-network
+    restart: always
+
+  personal-info-service-3:
+    build:
+      context: ./docker
+      dockerfile: dockerfile.profile
+    container_name: personal-info-service-3
+    ports:
+      - "3006:3004"
+    environment:
+      - PORT=3004
+      - INSTANCE_ID=3
+      - MONGO_URI=mongodb+srv://ankitsoni12351234:4kVkpnUEn4XeyyMR@ai-coding-review-anlyti.4lt3kxu.mongodb.net/profile-service?retryWrites=true&w=majority
+      - KAFKA_BROKERS=kafka-1:29092,kafka-2:29093,kafka-3:29094
+      - KAFKA_GROUP_MIN_SESSION_TIMEOUT_MS=6000
+      - KAFKA_GROUP_MAX_SESSION_TIMEOUT_MS=300000
+      - JWT_SECRET_FILE=/run/secrets/jwt_secret
+      - JWT_EXPIRATION=1d
+      - REDIS_CLUSTER_NODES=redis-node-1:7001,redis-node-2:7002,redis-node-3:7003,redis-node-4:7004,redis-node-5:7005,redis-node-6:7006
+      - LOG_LEVEL=info
+      - REDIS_CACHE_TTL=3600
+      - PROFILE_EVENTS_TOPIC=profile-events
+    depends_on:
+      kafka-1:
+        condition: service_healthy
+      kafka-2:
+        condition: service_healthy
+      kafka-3:
+        condition: service_healthy
+      redis-cluster-init:
+        condition: service_completed_successfully
+    secrets:
+      - jwt_secret
+    deploy:
+      resources:
+        limits:
+          memory: 2.5G
+          cpus: "2.0"
+        reservations:
+          memory: 2G
+    networks:
+      - app-network
+    restart: always
+
+   
+
+  # Load Balancer
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: nginx-lb
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - auth-service-1
+      - auth-service-2
+      - auth-service-3
+      - personal-info-service-1
+      - personal-info-service-2
+      - personal-info-service-3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+    networks:
+      - app-network
+    restart: always
+
+  # Monitoring Stack
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+      - "--storage.tsdb.retention.time=200h"
+      - "--web.enable-lifecycle"
+      - "--web.enable-admin-api"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "1.0"
+    networks:
+      - app-network
+    restart: always
+
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: grafana
+    ports:
+      - "3005:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=redis-datasource,kafka-datasource
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    networks:
+      - app-network
+    restart: always
+
+  # Node Exporter for system metrics
+  node-exporter:
+    image: prom/node-exporter:v1.6.0
+    container_name: node-exporter
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.rootfs=/host"
+      - "--path.sysfs=/host/sys"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.2"
+    networks:
+      - app-network
+    restart: always
+
+  # Log Management
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.8.0
+    container_name: elasticsearch
+    environment:
+      - node.name=es-node
+      - cluster.name=messenger-logs
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms1G -Xmx1G"
+      - xpack.security.enabled=false
+    ulimits:
+      memloadck:
+        soft: -1
+        hard: -1
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "1.5"
+    networks:
+      - app-network
+    restart: always
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.8.0
+    container_name: kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+    networks:
+      - app-network
+    restart: always
+
+  # Health Check Service
+  healthcheck:
+    image: alpine:latest
+    container_name: healthcheck
+    command: >
+      sh -c "
+        apk add --no-cache curl &&
+        while true; do
+          echo 'Health check running...' &&
+          curl -f http://nginx/health || echo 'Health check failed' &&
+          sleep 30
+        done
+      "
+    depends_on:
+      - nginx
+    networks:
+      - app-network
+    restart: always
+
+volumes:
+  # Zookeeper
+  zookeeper-1-data:
+    driver: local
+  zookeeper-1-logs:
+    driver: local
+  zookeeper-2-data:
+    driver: local
+  zookeeper-2-logs:
+    driver: local
+  zookeeper-3-data:
+    driver: local
+  zookeeper-3-logs:
+    driver: local
+
+  # Kafka
+  kafka-1-data:
+    driver: local
+  kafka-2-data:
+    driver: local
+  kafka-3-data:
+    driver: local
+
+  # Redis
+  redis-1-data:
+    driver: local
+  redis-2-data:
+    driver: local
+  redis-3-data:
+    driver: local
+  redis-4-data:
+    driver: local
+  redis-5-data:
+    driver: local
+  redis-6-data:
+    driver: local
+
+  # Monitoring
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  elasticsearch-data:
+    driver: local
+
+secrets:
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+
+networks:
+  app-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

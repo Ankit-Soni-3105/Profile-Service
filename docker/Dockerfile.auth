@@ -1,0 +1,32 @@
+# Base image
+FROM node:20-alpine AS builder
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production
+
+# Copy source code
+COPY . .
+
+# Final stage
+FROM node:20-alpine
+
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && adduser -S nodeapp -u 1001 -G nodejs
+
+# Set working directory
+WORKDIR /app
+
+# Copy built dependencies and source
+COPY --from=builder --chown=nodeapp:nodejs /app .
+
+# Switch to non-root user
+USER nodeapp
+
+# Command to run the app
+CMD ["node", "server.js"]

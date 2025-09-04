@@ -1,0 +1,15 @@
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+  - name: Redis
+    type: redis-datasource
+    access: proxy
+    url: redis://redis-node-1:7001
+  - name: Kafka
+    type: kafka-datasource
+    access: proxy
+    url: http://kafka-1:29092
