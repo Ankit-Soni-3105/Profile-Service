@@ -1,32 +1,33 @@
-import { createLogger, format, transports } from 'winston';
+import winston from 'winston';
+import config from '../config/config.js';
 
-const { combine, timestamp, printf, errors } = format;
+// Define log format
+const logFormat = winston.format.combine(
+    winston.format.timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+    winston.format.json(),
+    winston.format.metadata(),
+    winston.format.printf(({ timestamp, level, message, metadata }) => {
+        return `${timestamp} [${level.toUpperCase()}]: ${message} ${Object.keys(metadata).length ? JSON.stringify(metadata) : ''}`;
+    })
+);
 
-// Custom format for error handling
-const errorFormat = printf(({ level, message, timestamp, stack }) => {
-    return `${timestamp} [${level}]: ${stack || message}`;
-});
-
-const logger = createLogger({
-    level: 'info',
-    format: combine(
-        timestamp(),
-        errors({ stack: true }), // Capture stack trace for errors
-        errorFormat
-    ),
+// Create logger
+export const logger = winston.createLogger({
+    level: config.LOG_LEVEL || 'info',
+    format: logFormat,
     transports: [
-        new transports.Console(),
-        // You can add file transport for error logs if needed
-        // new transports.File({ filename: 'error.log', level: 'error' })
+        new winston.transports.Console(),
+        new winston.transports.File({
+            filename: 'logs/error.log',
+            level: 'error',
+        }),
+        new winston.transports.File({
+            filename: 'logs/combined.log',
+        }),
     ],
-    exceptionHandlers: [
-        new transports.Console(),
-        // new transports.File({ filename: 'exceptions.log' })
-    ],
-    rejectionHandlers: [
-        new transports.Console(),
-        // new transports.File({ filename: 'rejections.log' })
-    ]
 });
 
-export default logger;
+// Add stream for Morgan (HTTP request logging)
+logger.stream = {
+    write: (message) => logger.info(message.trim()),
+};

@@ -3,9 +3,11 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
+# Copy package files first to leverage caching
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm install --production
 
+# Copy the rest of the application code
 COPY . .
 
 # Stage 2: Production
@@ -13,10 +15,15 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Copy built files from the builder stage
 COPY --from=builder /app /app
 
 ENV NODE_ENV=production
 
 EXPOSE 3004
+
+# Add non-root user for security
+RUN addgroup -g 1001 -S nodejs && adduser -S nodeapp -u 1001 -G nodejs
+USER nodeapp
 
 CMD ["node", "server.js"]
