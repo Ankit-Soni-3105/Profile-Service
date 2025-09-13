@@ -1,129 +1,520 @@
+// redis.service.js
 import Redis from 'ioredis';
-import config from '../config/config.js';
-import { logger } from '../utils/logger.js'; // Use structured logger
+import { logger } from '../utils/logger.js';
+import ApiError from './apierrors.service.js';
+// import { metricsCollector } from '../utils/metrics.js'; // Uncomment once metrics.js is implemented
 
-// Redis cluster configuration with retry strategy and connection options
-const redisClient = new Redis.Cluster({
-    rootNodes: config.REDIS_CLUSTER_NODES.split(',').map(node => ({ url: `redis://${node.trim()}` })),
-    defaults: {
-        retryStrategy: (times) => {
-            const delay = Math.min(times * 100, 3000); // Max delay 3s
-            return delay;
-        },
-        maxRetriesPerRequest: 3,
-        enableReadyCheck: true,
-        socket: {
-            connectTimeout: 10000, // 10s timeout
-            keepAlive: 1000, // Keep-alive every 1s
-        },
-    },
-});
+/**
+ * Optimized Redis Service for High-Scale Applications
+ * Supports clustering, batch operations, comprehensive error handling, and integrated cache logic
+ */
+class RedisService {
+    constructor() {
+        this.client = null;
+        this.isConnected = false;
+        this.retryAttempts = 0;
+        this.maxRetries = parseInt(process.env.REDIS_MAX_RETRIES) || 5;
+        this.baseRetryDelay = parseInt(process.env.REDIS_RETRY_DELAY) || 2000;
+        this.maxConnections = parseInt(process.env.REDIS_MAX_CONNECTIONS) || 100;
+        this.defaultTTL = parseInt(process.env.REDIS_DEFAULT_TTL) || 3600; // Default TTL for cache operations
 
-// Event handlers for connection management
-redisClient.on('error', (err) => {
-    logger.error('Redis Cluster Error:', { message: err.message, stack: err.stack });
-});
+        this.initialize();
+    }
 
-redisClient.on('connect', () => logger.info('Redis Cluster connecting...'));
-redisClient.on('ready', () => logger.info('Redis Cluster connected (Profile Service)'));
-redisClient.on('end', () => logger.warn('Redis Cluster disconnected'));
-
-// Async connection setup with retry
-export const connectCache = async (maxRetries = 5) => {
-    let attempts = 0;
-    while (attempts < maxRetries) {
+    async initialize() {
         try {
-            await redisClient.connect();
-            logger.info('Redis Cluster connection established');
-            return;
+            const redisConfig = {
+                retryStrategy: (times) => {
+                    const delay = Math.min(times * this.baseRetryDelay, 10000);
+                    logger.warn('Redis retry attempt', {
+                        attempt: times,
+                        delay: `${delay}ms`,
+                        maxRetries: this.maxRetries,
+                        pid: process.pid,
+                    });
+                    return delay;
+                },
+                maxRetriesPerRequest: 3,
+                enableReadyCheck: true,
+                lazyConnect: true,
+                connectTimeout: parseInt(process.env.REDIS_CONNECT_TIMEOUT) || 10000,
+                commandTimeout: parseInt(process.env.REDIS_COMMAND_TIMEOUT) || 5000,
+                socket: {
+                    keepAlive: 1000,
+                    reconnectOnError: (err) => err.message.includes('READONLY'),
+                },
+                enableOfflineQueue: false,
+                showFriendlyErrorStack: process.env.NODE_ENV === 'development',
+                maxClients: this.maxConnections,
+            };
+
+            // Cluster configuration
+            if (process.env.REDIS_CLUSTER_ENABLED === 'true') {
+                const clusterNodes = (process.env.REDIS_CLUSTER_NODES || 'localhost:6379')
+                    .split(',')
+                    .map((node) => {
+                        const [host, port] = node.trim().split(':');
+                        return { host, port: parseInt(port) || 6379 };
+                    });
+                this.client = new Redis.Cluster(clusterNodes, {
+                    redisOptions: {
+                        ...redisConfig,
+                        password: process.env.REDIS_PASSWORD,
+                    },
+                    enableOfflineQueue: false,
+                    scaleReads: 'slave',
+                    maxRedirections: 16,
+                });
+                logger.info('Redis Cluster client initialized', { nodes: clusterNodes.length, pid: process.pid });
+            } else {
+                this.client = new Redis({
+                    ...redisConfig,
+                    host: process.env.REDIS_HOST || 'localhost',
+                    port: parseInt(process.env.REDIS_PORT) || 6379,
+                    password: process.env.REDIS_PASSWORD,
+                    db: parseInt(process.env.REDIS_DB) || 0,
+                });
+                logger.info('Redis single instance client initialized', { pid: process.pid });
+            }
+
+            this.setupEventHandlers();
+            await this.connect();
         } catch (error) {
-            attempts++;
-            logger.error(`Redis connection attempt ${attempts} failed`, { message: error.message });
-            if (attempts === maxRetries) {
-                throw new Error(`Failed to connect to Redis after ${maxRetries} attempts: ${error.message}`);
-            }
-            await new Promise(resolve => setTimeout(resolve, 2000 * attempts));
+            logger.error('Redis initialization failed', {
+                error: error.message,
+                stack: error.stack,
+                pid: process.pid,
+            });
+            throw new ApiError(500, 'Redis initialization failed');
         }
     }
-};
 
-// Health check for Redis cluster
-export const isHealthy = async () => {
-    try {
-        await redisClient.ping();
-        return true;
-    } catch (error) {
-        logger.error('Redis health check failed', { message: error.message });
-        return false;
+    setupEventHandlers() {
+        this.client.on('connect', () => {
+            logger.info('Redis client connecting', { pid: process.pid });
+        });
+
+        this.client.on('ready', () => {
+            logger.info('Redis client ready and connected', { pid: process.pid });
+            this.isConnected = true;
+            this.retryAttempts = 0;
+        });
+
+        this.client.on('error', (error) => {
+            logger.error('Redis client error', {
+                message: error.message,
+                code: error.code,
+                errno: error.errno,
+                stack: error.stack,
+                pid: process.pid,
+            });
+            this.isConnected = false;
+        });
+
+        this.client.on('close', () => {
+            logger.warn('Redis connection closed', { pid: process.pid });
+            this.isConnected = false;
+        });
+
+        this.client.on('reconnecting', (time) => {
+            logger.info('Redis client reconnecting', { delay: `${time}ms`, pid: process.pid });
+        });
+
+        this.client.on('end', () => {
+            logger.warn('Redis connection ended', { pid: process.pid });
+            this.isConnected = false;
+        });
+
+        if (this.client.isCluster) {
+            this.client.on('node error', (error, node) => {
+                logger.error('Redis cluster node error', {
+                    error: error.message,
+                    node: `${node.options.host}:${node.options.port}`,
+                    stack: error.stack,
+                    pid: process.pid,
+                });
+            });
+        }
     }
-};
 
-// Cache set with error handling and TTL validation
-export const setCache = async (key, value, ttl = 3600) => {
-    try {
-        if (!key || typeof key !== 'string') {
-            throw new Error('Invalid cache key');
-        }
-        if (!Number.isInteger(ttl) || ttl <= 0) {
-            throw new Error('TTL must be a positive integer');
-        }
-        const stringValue = typeof value === 'string' ? value : JSON.stringify(value);
-        await redisClient.set(key, stringValue, { EX: ttl });
-        logger.info(`Cache set for key: ${key}`, { ttl });
-    } catch (error) {
-        logger.error(`Failed to set cache for key ${key}`, { message: error.message });
-        throw error;
-    }
-};
-
-// Cache get with error handling and JSON parsing
-export const getCache = async (key) => {
-    try {
-        if (!key || typeof key !== 'string') {
-            throw new Error('Invalid cache key');
-        }
-        const data = await redisClient.get(key);
-        if (data) {
-            logger.info(`Cache hit for key: ${key}`);
+    async connect(maxRetries = this.maxRetries) {
+        let attempts = 0;
+        while (attempts < maxRetries) {
             try {
-                return JSON.parse(data);
-            } catch (parseError) {
-                logger.error(`Failed to parse cache data for key ${key}`, { message: parseError.message });
-                return data; // Return raw data if parsing fails
+                await this.client.connect();
+                logger.info('Redis connection established successfully', { pid: process.pid });
+                return;
+            } catch (error) {
+                attempts++;
+                this.retryAttempts = attempts;
+                logger.error('Redis connection attempt failed', {
+                    attempt: attempts,
+                    maxRetries,
+                    message: error.message,
+                    code: error.code,
+                    pid: process.pid,
+                });
+                if (attempts === maxRetries) {
+                    logger.error('Max Redis connection retries reached', { pid: process.pid });
+                    throw new ApiError(500, 'Failed to connect to Redis after max retries');
+                }
+                const delay = this.baseRetryDelay * Math.pow(2, attempts);
+                await new Promise((resolve) => setTimeout(resolve, delay));
             }
         }
-        logger.info(`Cache miss for key: ${key}`);
-        return null;
-    } catch (error) {
-        logger.error(`Failed to get cache for key ${key}`, { message: error.message });
-        throw error;
     }
-};
 
-// Cache delete with error handling
-export const deleteCache = async (key) => {
-    try {
-        if (!key || typeof key !== 'string') {
-            throw new Error('Invalid cache key');
+    // Health check with detailed metrics
+    async healthCheck() {
+        try {
+            if (!this.isConnected) return { healthy: false, message: 'Redis not connected' };
+            const start = Date.now();
+            const result = await this.client.ping();
+            const latency = Date.now() - start;
+            const info = await this.client.info('memory');
+            const memoryUsed = info.match(/used_memory:(\d+)/)?.[1] || 'N/A';
+            // metricsCollector.record('redis.health_latency', latency); // Uncomment for metrics
+            return {
+                healthy: result === 'PONG',
+                latency: `${latency}ms`,
+                memoryUsed: memoryUsed,
+                connected: this.isConnected,
+            };
+        } catch (error) {
+            logger.error('Redis health check failed', {
+                error: error.message,
+                pid: process.pid,
+            });
+            // metricsCollector.increment('redis.health_check_failed'); // Uncomment for metrics
+            return { healthy: false, message: error.message };
         }
-        await redisClient.del(key);
-        logger.info(`Cache deleted for key: ${key}`);
-    } catch (error) {
-        logger.error(`Failed to delete cache for key ${key}`, { message: error.message });
-        throw error;
     }
-};
 
-// Graceful disconnection
-export const disconnectCache = async () => {
-    try {
-        await redisClient.quit();
-        logger.info('Redis Cluster disconnected gracefully');
-    } catch (error) {
-        logger.error('Error during Redis disconnection', { message: error.message });
-        throw error;
+    // Integrated Cache Operations (from cache.service.js)
+    /**
+     * Get value from cache with JSON parsing
+     * @param {string} key - Cache key
+     * @returns {Promise<any>} - Cached value or null
+     */
+    async get(key) {
+        if (!this.isConnected) {
+            logger.warn('Redis not connected, skipping cache GET', { key, pid: process.pid });
+            return null;
+        }
+        try {
+            if (!this.validateKey(key)) throw new ApiError(400, 'Invalid cache key');
+            const start = Date.now();
+            const data = await this.client.get(key);
+            const latency = Date.now() - start;
+            logger.debug('Cache GET', {
+                key,
+                hit: !!data,
+                latency: `${latency}ms`,
+                pid: process.pid,
+            });
+            // metricsCollector.increment(data ? 'cache.hit' : 'cache.miss', { key }); // Uncomment for metrics
+            // metricsCollector.record('cache.get_duration', latency);
+            return data ? JSON.parse(data) : null;
+        } catch (error) {
+            logger.error('Redis GET operation failed', {
+                key,
+                error: error.message,
+                pid: process.pid,
+            });
+            // metricsCollector.increment('cache.get_failed', { key });
+            return null;
+        }
     }
-};
 
-// Export client for advanced usage
-export { redisClient };
+    /**
+     * Set value in cache with JSON stringification and TTL
+     * @param {string} key - Cache key
+     * @param {any} value - Value to cache
+     * @param {number} ttl - Time to live in seconds (default: this.defaultTTL)
+     * @returns {Promise<boolean>}
+     */
+    async set(key, value, ttl = this.defaultTTL) {
+        if (!this.isConnected) {
+            logger.warn('Redis not connected, skipping cache SET', { key, pid: process.pid });
+            return false;
+        }
+        try {
+            if (!this.validateKey(key)) throw new ApiError(400, 'Invalid cache key');
+            if (!this.validateTTL(ttl)) throw new ApiError(400, 'Invalid TTL');
+            const stringValue = typeof value === 'string' ? value : JSON.stringify(value);
+            const start = Date.now();
+            const result = await this.client.set(key, stringValue, 'EX', ttl);
+            const latency = Date.now() - start;
+            logger.debug('Cache SET', {
+                key,
+                ttl,
+                success: result === 'OK',
+                latency: `${latency}ms`,
+                pid: process.pid,
+            });
+            // metricsCollector.increment('cache.set', { key });
+            // metricsCollector.record('cache.set_duration', latency);
+            return result === 'OK';
+        } catch (error) {
+            logger.error('Redis SET operation failed', {
+                key,
+                ttl,
+                error: error.message,
+                pid: process.pid,
+            });
+            // metricsCollector.increment('cache.set_failed', { key });
+            return false;
+        }
+    }
+
+    /**
+     * Delete cache entries matching a pattern
+     * @param {string} pattern - Pattern to match keys (e.g., 'summary:*')
+     * @returns {Promise<void>}
+     */
+    async deletePattern(pattern) {
+        if (!this.isConnected) {
+            logger.warn('Redis not connected, skipping cache DELETE pattern', { pattern, pid: process.pid });
+            return;
+        }
+        try {
+            const start = Date.now();
+            const keys = await this.scanKeys(pattern);
+            if (keys.length > 0) {
+                await this.client.del(...keys);
+                const latency = Date.now() - start;
+                logger.debug('Cache DELETE pattern', {
+                    pattern,
+                    deleted: keys.length,
+                    latency: `${latency}ms`,
+                    pid: process.pid,
+                });
+                // metricsCollector.increment('cache.delete_pattern', { pattern, count: keys.length });
+                // metricsCollector.record('cache.delete_pattern_duration', latency);
+            }
+        } catch (error) {
+            logger.error('Cache delete pattern failed for', {
+                pattern,
+                error: error.message,
+                pid: process.pid,
+            });
+            // metricsCollector.increment('cache.delete_pattern_failed', { pattern });
+            throw new ApiError(500, 'Failed to delete cache pattern');
+        }
+    }
+
+    /**
+     * Scan for keys matching a pattern (handles large keyspaces efficiently)
+     * @param {string} pattern - Pattern to match
+     * @param {number} count - Number of keys to scan per iteration (default: 1000)
+     * @returns {Promise<string[]>} - Array of matching keys
+     */
+    async scanKeys(pattern, count = 1000) {
+        if (!this.isConnected) return [];
+        const keys = [];
+        let cursor = '0';
+        try {
+            do {
+                const [nextCursor, foundKeys] = await this.client.scan(
+                    cursor,
+                    'MATCH',
+                    pattern,
+                    'COUNT',
+                    count // Scalable batch size
+                );
+                keys.push(...foundKeys);
+                cursor = nextCursor;
+            } while (cursor !== '0');
+            return keys;
+        } catch (error) {
+            logger.error('Cache scan failed for pattern', {
+                pattern,
+                error: error.message,
+                pid: process.pid,
+            });
+            throw new ApiError(500, 'Failed to scan cache keys');
+        }
+    }
+
+    /**
+     * Clear all cache (use with caution in production)
+     * @returns {Promise<void>}
+     */
+    async clearAll() {
+        if (!this.isConnected) {
+            logger.warn('Redis not connected, skipping CLEAR ALL', { pid: process.pid });
+            return;
+        }
+        try {
+            const start = Date.now();
+            await this.client.flushall();
+            const latency = Date.now() - start;
+            logger.info('All cache cleared', { latency: `${latency}ms`, pid: process.pid });
+            // metricsCollector.increment('cache.clear_all');
+            // metricsCollector.record('cache.clear_all_duration', latency);
+        } catch (error) {
+            logger.error('Cache clear all failed', {
+                error: error.message,
+                pid: process.pid,
+            });
+            // metricsCollector.increment('cache.clear_all_failed');
+            throw new ApiError(500, 'Failed to clear cache');
+        }
+    }
+
+    async del(key) {
+        if (!this.isConnected) {
+            logger.warn('Redis not connected, skipping cache DELETE', { key, pid: process.pid });
+            return 0;
+        }
+        try {
+            if (!this.validateKey(key)) throw new ApiError(400, 'Invalid cache key');
+            const start = Date.now();
+            const result = await this.client.del(key);
+            logger.debug('Cache DELETE', {
+                key,
+                deleted: result,
+                latency: `${Date.now() - start}ms`,
+                pid: process.pid,
+            });
+            return result;
+        } catch (error) {
+            logger.error('Redis DELETE operation failed', {
+                key,
+                error: error.message,
+                pid: process.pid,
+            });
+            return 0;
+        }
+    }
+
+    async exists(key) {
+        if (!this.isConnected) return false;
+        try {
+            if (!this.validateKey(key)) return false;
+            const start = Date.now();
+            const result = await this.client.exists(key);
+            logger.debug('Cache EXISTS', {
+                key,
+                exists: result === 1,
+                latency: `${Date.now() - start}ms`,
+                pid: process.pid,
+            });
+            return result === 1;
+        } catch (error) {
+            logger.error('Redis EXISTS operation failed', {
+                key,
+                error: error.message,
+                pid: process.pid,
+            });
+            return false;
+        }
+    }
+
+    async keys(pattern = '*', limit = 1000) {
+        if (!this.isConnected) {
+            logger.warn('Redis not connected, skipping SCAN', { pattern, pid: process.pid });
+            return [];
+        }
+        try {
+            const start = Date.now();
+            const keys = [];
+            const stream = this.client.scanStream({ match: pattern, count: 100 });
+            return new Promise((resolve, reject) => {
+                stream.on('data', (resultKeys) => {
+                    keys.push(...resultKeys);
+                    if (keys.length >= limit) {
+                        stream.destroy();
+                        resolve(keys.slice(0, limit));
+                    }
+                });
+                stream.on('end', () => {
+                    logger.debug('Cache SCAN completed', {
+                        pattern,
+                        keyCount: keys.length,
+                        latency: `${Date.now() - start}ms`,
+                        pid: process.pid,
+                    });
+                    resolve(keys);
+                });
+                stream.on('error', (error) => {
+                    logger.error('Redis SCAN operation failed', {
+                        pattern,
+                        error: error.message,
+                        pid: process.pid,
+                    });
+                    reject(new ApiError(500, 'Redis SCAN failed'));
+                });
+            });
+        } catch (error) {
+            logger.error('Redis KEYS operation failed', {
+                pattern,
+                error: error.message,
+                pid: process.pid,
+            });
+            return [];
+        }
+    }
+
+    async pipeline(commands) {
+        if (!this.isConnected) {
+            logger.warn('Redis not connected, skipping pipeline', { pid: process.pid });
+            return [];
+        }
+        try {
+            const start = Date.now();
+            const pipeline = this.client.pipeline();
+            commands.forEach(({ method, args }) => pipeline[method](...args));
+            const results = await pipeline.exec();
+            logger.debug('Pipeline executed', {
+                commandCount: commands.length,
+                latency: `${Date.now() - start}ms`,
+                pid: process.pid,
+            });
+            return results;
+        } catch (error) {
+            logger.error('Redis pipeline error', {
+                error: error.message,
+                commandCount: commands.length,
+                pid: process.pid,
+            });
+            return [];
+        }
+    }
+
+    validateKey(key) {
+        return key && typeof key === 'string' && key.trim().length > 0 && key.length <= 512; // Added length limit for safety
+    }
+
+    validateTTL(ttl) {
+        return Number.isInteger(ttl) && ttl > 0 && ttl <= 604800; // Max 7 days for safety
+    }
+
+    getStatus() {
+        return {
+            connected: this.isConnected,
+            retryAttempts: this.retryAttempts,
+            maxRetries: this.maxRetries,
+            isCluster: this.client?.isCluster || false,
+            maxConnections: this.maxConnections,
+        };
+    }
+
+    async disconnect() {
+        try {
+            if (this.client) {
+                await this.client.quit();
+                logger.info('Redis client disconnected gracefully', { pid: process.pid });
+                this.isConnected = false;
+            }
+        } catch (error) {
+            logger.error('Redis disconnection error', {
+                error: error.message,
+                pid: process.pid,
+            });
+            this.client?.disconnect();
+        }
+    }
+}
+
+export default new RedisService();
